@@ -11,5 +11,5 @@
 
 
 uint16_t adcVal;
-void ADC0_init(int pinNumber);
+void ADC0_init(void);
 uint16_t ADC0_read(void);
