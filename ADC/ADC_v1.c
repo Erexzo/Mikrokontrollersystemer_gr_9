@@ -1,7 +1,7 @@
 #include "ADC_v1.h"
 
 
-void ADC0_init(int pinNumber)
+void ADC0_init(void)
 {
 	/* Disable digital input buffer */
 	PORTD.PIN6CTRL &= ~PORT_ISC_gm;
@@ -17,6 +17,8 @@ void ADC0_init(int pinNumber)
 	ADC0.MUXPOS = ADC_MUXPOS_AIN6_gc;
 	
 	ADC0.COMMAND = ADC_STCONV_bm;
+
+
 }
 
 
