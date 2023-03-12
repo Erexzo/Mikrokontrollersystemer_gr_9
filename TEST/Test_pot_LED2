@@ -1,11 +1,3 @@
-/*
- * Mikro_Prosjekt_Prep.c
- *
- * Created: 12.03.2023 13:05:54
- * Author : anjo9
- */ 
-
-
 #include <avr/io.h>
 #include "ADC_v1.h"
 #include "USART_v1.h"
