@@ -1,6 +1,6 @@
 #include "USART_v1.h"
 
-static void USART3_sendChar(char c) //Oppretter en bruker-definert strøm
+void USART3_sendChar(char c) //Oppretter en bruker-definert strøm
 {
 	while (!(USART3.STATUS & USART_DREIF_bm)) //sjekker at forrige sending er feridg
 	{
@@ -10,7 +10,7 @@ static void USART3_sendChar(char c) //Oppretter en bruker-definert strøm
 }
 
 //pakker inn _sendChar funksjonen slik at den møter forventningene til FDEV_SETUP_STREAM funksjonen
-static int USART3_printChar(char c, FILE *stream)
+int USART3_printChar(char c, FILE *stream)
 {
 	USART3_sendChar(c);
 	return 0;
@@ -19,7 +19,7 @@ static int USART3_printChar(char c, FILE *stream)
 //tar en brukererdefinert buffer strøm og setter den opp som en strøm som er gyldig for stdio operasjoner
 static FILE USART_stream = FDEV_SETUP_STREAM(USART3_printChar, NULL, _FDEV_SETUP_WRITE);
 
-static void USART3_init(void)
+void USART3_init(void)
 {
 	PORTB.DIR |= PIN0_bm; //aktiverer TX pin
 	
