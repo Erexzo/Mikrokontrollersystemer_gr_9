@@ -10,5 +10,4 @@
 
 static void USART3_sendChar(char c);
 static int USART3_printChar(char c, FILE *stream);
-static FILE USART_stream = FDEV_SETUP_STREAM(USART3_printChar, NULL, _FDEV_SETUP_WRITE);
 static void USART3_init(void);
