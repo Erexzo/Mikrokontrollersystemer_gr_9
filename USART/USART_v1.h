@@ -7,7 +7,6 @@
 #include <util/delay.h>
 #include <stdio.h>
 
-
-static void USART3_sendChar(char c);
-static int USART3_printChar(char c, FILE *stream);
-static void USART3_init(void);
+void USART3_sendChar(char c);
+int USART3_printChar(char c, FILE *stream);
+void USART3_init(void);
