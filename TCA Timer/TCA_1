@@ -1,0 +1,53 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdio.h>
+
+#include "USART.h"
+
+#define F_CPU 4000000UL
+#define USART3_BAUD_RATE(BAUD_RATE) ((float)(F_CPU * 64 / (16 * (float)BAUD_RATE)) + 0.5)
+
+volatile uint32_t count = 0;  // Counter for keeping track of elapsed time
+volatile uint8_t running = 1; // Flag for indicating if timer is running
+
+// Function to initialize Timer/Counter A0
+void TCA0_init(void);
+
+void TCA0_init(void)
+{
+	// Set up TCA to trigger an interrupt every 1 ms
+	TCA0.SINGLE.PER = 65535;                   // Set the period register to maximum value to get the longest possible period
+	TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;   // Enable overflow interrupt
+	TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV1_gc | TCA_SINGLE_ENABLE_bm; // Enable timer with no prescaler
+}
+
+// Interrupt service routine for Timer/Counter A0 overflow interrupt
+ISR(TCA0_OVF_vect)
+{
+	if (running)    // If timer is running, increment the count
+	{
+		count++;
+		if (count == 327680) {  // If 5 seconds have passed
+			running = 0;        // Stop the timer
+			// Print elapsed time
+			printf("Elapsed time: %lu ms\r\n", count / 64,536); // Print the elapsed time in seconds by dividing the count by the number of timer ticks in a second
+			count = 0;          // Reset the counter
+			running = 1;        // Start the timer again
+		}
+	}
+}
+
+int main(void)
+{
+	USART3_init();          // Initialize USART for serial communication
+	TCA0_init();            // Initialize Timer/Counter A0
+
+	// Enable interrupts globally
+	sei();
+
+	while (1)
+	{
+		// Do nothing
+	}
+}
