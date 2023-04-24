@@ -1,0 +1,249 @@
+//OPPSETT
+
+/* RTC Period */
+#define F_CPU 4000000UL //Setter CPU hastighet
+#define RTC_PERIOD (511) //RTC periode
+
+//Inkluderer nødvendige standardbilioteker
+#include <avr/io.h> 
+#include <avr/wdt.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdio.h>
+#include <time.h>
+
+//Inkluderer tilleggskode
+#include "USART_v1.h"
+#include "ADC_v1.h"
+
+
+//Definerer globale variabler som brukes videre i koden
+uint16_t adcTemp = 0;   //Mapper riktig input til temperatur-avlesnings funksjon
+uint16_t adcFanPSU = 0; //Mapper riktig input til Fan PSU voltmeter funksjon
+uint16_t adcAvrPSU = 0; //Mapper riktig input til AVR PSU voltmeter funksjon
+uint16_t speedMon1 = 0; //Mapper riktig input til viftehastighet for vifte 1
+uint16_t speedMon2 = 0; //Mapper riktig input til viftehastighet for vifte 2
+uint16_t counterFan1 = 0;		//Telle-variabel vifte 1 ADC rippel
+uint16_t counterFan2 = 0;		//Telle-variabel vifte 2 ADC rippel
+uint16_t speedCounter1 = 0;
+volatile uint32_t countTime = 0;//Telle-variabel for tidtaking
+volatile uint8_t running = 1;	//Variabel som indikerer at timer går
+int prevSpeedMon1 = 0;			//Forrige ADC sampleverdi vifte 1
+int prevSpeedMon2 = 0;			//Forrige ADC sampleverdi vifte 2
+int prevCounterFan1 = 0;		//Forrige rippel telleverdi vifte 1
+int prevCounterFan2 = 0;		//Forrige rippel telelverdi vifte 2
+int errorCheck1 = 0;			//Errorcheck telleverdi for rippel tellings-reset vifte 1
+int errorCheck2 = 0;			//Errorcheck telleverdi for rippel tellings-reset vifte 2
+int AVRvoltage = 0;				//AVR voltmeter variabel
+int fanPSUvoltage = 0;			//Vifte-strømforsynings variabel
+int tempPrint = 0;				//Temperaturavlesnings variabel
+
+
+
+//Kaller på funksjoner
+long map(long x, long in_min, long in_max, long out_min, long out_max); //Map funksjon
+void tempReading(uint16_t adcTemp); //Temperatur-avlesning
+void fanVoltageReading(uint16_t adcFanPSU); //Spenningsavlesning vifte PSU
+void adrVoltageReading(uint16_t adcAvrPSU); //Spenningsavlesning ADR PSU
+void wdtAlert(void);  //Watch Dog Timer USART varsling
+void TCA0_init(void); //TCA timer initsialisering
+void fanSatus(uint16_t speedMon1, uint16_t speedMon2); //Viftestatus funksjon
+
+//FUNKSJONER:
+
+//Map funksjon som brukes videre i ulike ADC konverteringer
+long map(long x, long in_min, long in_max, long out_min, long out_max) 
+{
+	//Mapper inngangsverdier til nye utgangsverdier
+	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min; 
+}
+
+
+//TCA timer
+void TCA0_init(void) //TCA timer initialisering
+{
+	TCA0.SINGLE.PER = 65535;	//Setter periode-register til 65536 for max periodelenge (2^16 = 65536)
+	TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;   //Aktiverer interupt
+	TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV1_gc | TCA_SINGLE_ENABLE_bm; //Aktiverer timer uten pre-scaler
+}
+
+//Temperaturavlesning
+void tempReading(uint16_t adcTemp) //Funksjon for temperatur-avesning
+{ 
+	float reading = adcTemp;		  //Leser av ADC
+	float voltage = (reading*5)/1023; //Bergener utgangsspenningnen til temp sensor
+	float tempC = (voltage-0.5)*100;  //Konvererterer denne spenningen til temperatur i celcius
+	tempPrint = round(tempC);		  //Avrunder temperaturen til heltallsverdi
+
+}
+
+
+//Spenningsovervåking ADR
+void fanVoltageReading(uint16_t adcFanPSU) //Funksjon for spenningsavlesning
+{
+	fanPSUvoltage = map(adcFanPSU,0,1023,0,12); //Mapper avlest ADC inngangsnivå til korrisponderende spenningsverdi
+}
+
+
+//Spenningsovervåkning vifter
+void adrVoltageReading(uint16_t adcAvrPSU) //Funksjon for spenningsavlesning
+{
+	AVRvoltage = map(adcAvrPSU,0,1023,0,5); //Mapper avlest ADC inngangsnivå til korrisponderende spenningsverdi
+}
+
+
+//Watch Dog Timer
+void wdtAlert(void) //WDT varsling
+{
+	if (RSTCTRL.RSTFR & RSTCTRL_WDRF_bm) //Sjekker om WDT har blitt reset
+	{
+		printf("WDT reset\n"); //USART print at WTD er reset
+	}
+}
+
+//Viftestatus funksjon
+void fanSatus(uint16_t speedMon1, uint16_t speedMon2)
+{
+	//Lagrer forrige rippel-telleverdier for videre sammenligning
+	prevCounterFan1 = counterFan1;
+	prevCounterFan2 = counterFan2;
+	
+	//Sjekker vifte 1 sin ADC sample verdi og forrige ADC sample verdi 
+	//for å verfisere at viften kjører og for at rippel skal telles
+	if ((speedMon1 < 650) && (abs(speedMon1 - prevSpeedMon1) > 1))
+	{
+		counterFan1++;  //Inkrimenterer telleren for vifte 1 dersom nytt rippel er oppdaget
+		speedCounter1++;
+		errorCheck1 = 0; //Resetter feilindikatoren
+	}
+	
+	//Sjekker vifte 2 sin ADC sample verdi og forrige ADC sample verdi
+	//for å verfisere at viften kjører og for at rippel skal telles
+	if ((speedMon2 < 800) && (abs(speedMon2 - prevSpeedMon2) > 1))
+	{
+		counterFan2++;  //Inkrimenterer telleren for vifte 2 dersom nytt rippel er oppdaget
+		errorCheck2 = 0; //Resetter feilindikatoren
+	}
+	
+	//Dersom ny telleverdi er lik forrige telleverdi kan det tyde på at vifte har stoppet
+	//If-setning sjekker disse telle-variablene opp mot hverandre og inkrimerer errorCheck variabelen
+	if(counterFan1 == prevCounterFan1)
+	{
+		errorCheck1++; //Inkrimerer errorCheck1 variabelen
+	}
+	if(counterFan2 == prevCounterFan2)
+	{
+		errorCheck2++; //Inkrimerer errorCheck2 variabelen
+	}
+	
+	//For å unngå at små feil i ADC sample-verdiene forårsaker at systemet sier at viftene har stoppet 
+	//brukes errerCheck for å sjekke om 4 slike avlesninger oppstår på rad. Siden errorCheck blir reset
+	//hver gang viften teller vil dette bevise at viftene faktisk har stoppet. Deretter resettes vifte-tellerene
+	if (errorCheck1 == 10)
+	{
+		counterFan1 = 0; //Reset telelvariabel vifte 1
+	}
+	if (errorCheck2 == 10)
+	{
+		counterFan2 = 0; //Reset tellevariabel vifte 2
+	}
+	
+	//Lagrer ADC samplene slik at de kan brukes som sammenligning ved neste sampling. 
+	prevSpeedMon1 = speedMon1; 
+	prevSpeedMon2 = speedMon2;
+}
+
+
+//Interrupt til TCA timer
+ISR(TCA0_OVF_vect)
+{
+	if (running) //Hvis timeren går så økes telle-variabelen
+	{
+		countTime++;//Tidtakings-telle-variabl
+		
+		if (countTime == 65535) {  //Sjekker når ca 5 sek har gått. (65535 klokke ticks * 5 = 327675)
+			running = 0; //Stopper timer
+			
+			int fan1speed = ((speedCounter1));
+			printf("Fan1 speed %u\n", fan1speed);
+			speedCounter1 = 0;
+			fan1speed = 0;
+
+			printf("Grader i celsius: %d\n", tempPrint); //Printer temperaturen over USART
+			printf("Fan PSU voltage: %d\n", fanPSUvoltage); //Printer PSU voltage
+			printf("ADR PSU Voltage: %d\n", AVRvoltage); //Printer ADR voltage
+			
+
+			if (counterFan1 > 100) //Hvis vifte-teller har telt opp til over 140 rippler
+			{
+				printf("Vifte 1 kjører normalt\n"); //Vifte 1 kjører som den skal
+			}
+			if (counterFan2 > 100) //Hvis vifte-teller har telt opp til over 140 rippler
+			{
+				printf("Vifte 2 kjører normalt\n"); //Vifte 2 kjører som den skal
+			}
+			if (counterFan1 <= 100) //Hvis vifte-teller ikke når 140 opptalte rippler
+			{
+				printf("Vifte 1 har stoppet\n"); //Vifte 1 kjører ikke som den skal
+			}
+			if (counterFan2 <= 100) //Hvis vifte-teller ikke når 140 opptalte rippler
+			{
+				printf("Vifte 2 har stoppet\n\r"); //Vifte 2 kjører ikke som den skal
+			}
+			
+			//printf("ADC vifte 1 %u\n", speedMon1);
+			//printf("ADC vifte 2 %u\n", speedMon2);
+			
+			countTime = 0;	//Reset tidtakings-telle-variabel
+			running = 1;    //Starter timeren igjen
+		}
+	}
+}
+
+
+//  ****HOVEDPROGRAM****
+
+int main(void)		//Hovedfunksjons-loop
+{
+	USART3_init();	//starter USART
+	ADC0_init();	//Starter ADC
+	TCA0_init();	//Starter timer
+	
+	sei();			//Skrur på interrupts
+	
+	//Enable WDT
+	wdt_enable(WDT_PERIOD_8KCLK_gc); //Venter i 8K sykluser (8.2s) før evt reset
+	wdtAlert(); //USART melding om at WDT har blitt reset
+	
+	//Nullstiller alle variabler ved program-oppstart
+	counterFan1 = 0;
+	counterFan2 = 0;
+	speedCounter1 = 0;
+	prevSpeedMon1 = 0;
+	prevSpeedMon1 = 0;
+	prevCounterFan1 = 0;
+	prevCounterFan2 = 0;
+	errorCheck1 = 0;
+	errorCheck2 = 0;
+	
+	while (1) //Programmets kjøre-løkke
+	{
+		//Her routes ADC inputs til riktig funksjon
+		adcTemp = ADC0_read(7);   //Mapper riktig input til temperatur-avlesnings funksjon
+		adcFanPSU = ADC0_read(5); //Mapper riktig input til Fan PSU voltmeter funksjon
+		adcAvrPSU = ADC0_read(4); //Mapper riktig input til AVR PSU voltmeter funksjon
+		speedMon1 = ADC0_read(0); //Mapper riktig input til viftehastighet for vifte 1
+		speedMon2 = ADC0_read(1); //Mapper riktig input til viftehastighet for vifte 2
+		
+		//printf("ADC vifte 1 %u\n", speedMon2);
+		
+		//Kaller på alle funksjonene:
+		fanSatus(speedMon1, speedMon2); //Kaller på viftestatus-funksjon
+		tempReading(adcTemp);			//Kaller på temperaturfunksjonen
+		fanVoltageReading(adcFanPSU);	//Kaller på vifte-spennningsavlesning funksjonen
+		adrVoltageReading(adcAvrPSU);	//Kaller på ADR-spennningsavlesning funksjonen
+		
+		//Watch Dog Timer Reset
+		wdt_reset(); //Reset WDT
+	}
+}
